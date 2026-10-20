@@ -1,107 +1,119 @@
-# Bài Thực Hành 2: Mô Phỏng Cảm Biến IoT Gửi Dữ Liệu Môi Trường
+# BÁO CÁO BUỔI THỰC HÀNH 2: LẬP TRÌNH PYTHON VỚI GIAO THỨC AMQP (RABBITMQ)
 
-> **Sinh viên thực hiện**: Nguyễn Phú Bình | **MSV**: B23DCCN083 | **Lớp**: D23CNPM06
-
-## 1. Mục Tiêu
-- Mô phỏng thiết bị IoT gửi dữ liệu telemetry định kỳ (nhiệt độ, độ ẩm) qua AMQP broker.
-- Đóng gói dữ liệu dạng JSON chuẩn trong truyền thông IoT.
-- Viết chương trình giám sát (Monitoring Consumer) tự động phân tích dữ liệu và kích hoạt cảnh báo khi vượt ngưỡng:
-  - **Nhiệt độ > 35°C**: `CANH BAO: Nhiet do cao`
-  - **Độ ẩm < 40%**: `CANH BAO: Do am thap`
+> **Môn học**: Internet of Things (IoT) / Lập trình Mạng IoT  
+> **Sinh viên thực hiện**: Nguyễn Phú Bình  
+> **Mã sinh viên**: B23DCCN083  
+> **Lớp**: D23CNPM06  
 
 ---
 
-## 2. Cấu Trúc Thư Mục
+## 1. Mục Tiêu Buổi Thực Hành
+Buổi thực hành giúp sinh viên nắm vững nguyên lý hoạt động và triển khai giao thức **AMQP (Advanced Message Queuing Protocol)** trong các bài toán IoT:
+1. Hiểu mô hình Message Broker (RabbitMQ) và cách ứng dụng Python kết nối thông qua thư viện `pika`.
+2. Vận dụng mô hình hàng đợi cơ bản: `Producer` -> `Queue` -> `Consumer`.
+3. Đóng gói và truyền tải dữ liệu đo lường môi trường (telemetry) dạng JSON định kỳ, phát hiện cảnh báo vượt ngưỡng.
+4. Điều phối thông điệp phân tán với **Exchange** và **Routing Key** (Direct Exchange), phân luồng cảnh báo theo các mức độ nghiêm trọng (`info`, `warning`, `critical`).
+
+---
+
+## 2. Cấu Trúc Mã Nguồn BTH2
+
 ```text
 BTH2/
-├── sensor_producer_bai2.py     # Cảm biến IoT mô phỏng gửi dữ liệu mỗi 3s
-├── monitor_consumer_bai2.py    # Hệ thống giám sát, phân tích JSON & cảnh báo
-└── README.md                   # Hướng dẫn chi tiết Bài 2
+├── requirements.txt            # Thư viện pika
+├── README.md                   # Báo cáo chi tiết Buổi 2 AMQP
+│
+├── producer_bai1.py            # [Bài 1] Producer gửi thông tin sinh viên vào queue
+├── consumer_bai1.py            # [Bài 1] Consumer nhận message và in thời gian
+│
+├── sensor_producer_bai2.py     # [Bài 2] Cảm biến gửi telemetry JSON mỗi 3 giây
+├── monitor_consumer_bai2.py    # [Bài 2] Consumer giám sát, cảnh báo nhiệt độ/độ ẩm
+│
+├── alert_producer_bai3.py      # [Bài 3] Producer phát cảnh báo theo các severity
+├── warning_consumer_bai3.py    # [Bài 3] Consumer chỉ nhận cảnh báo WARNING
+├── critical_consumer_bai3.py   # [Bài 3] Consumer chỉ nhận cảnh báo CRITICAL
+└── all_alerts_consumer_bai3.py # [Bài 3 - Mở rộng] Nhận tất cả cảnh báo & ghi file log
 ```
 
 ---
 
-## 3. Cấu Hình Broker & Queue
-- **Broker**: RabbitMQ
-- **Host**: `localhost` (hoặc IP broker dùng chung trên lớp / CloudAMQP)
-- **Port**: `5672`
-- **Tài khoản**: `guest` / `guest`
-- **Queue sử dụng**: `sensor_data_queue`
+## 3. Môi Trường & Cài Đặt
 
----
+- **Ngôn ngữ**: Python 3.10+
+- **Thư viện**: `pika>=1.3.2`
+- **Broker**: RabbitMQ Server (chạy local trên port `5672` hoặc Docker)
 
-## 4. Định Dạng Gói Tin JSON Telemetry
-```json
-{
-  "device_id": "sensor01",
-  "temperature": 36.4,
-  "humidity": 38.9,
-  "timestamp": "2026-10-19 20:25:00"
-}
-```
-
----
-
-## 5. Hướng Dẫn Chạy Chương Trình
-
-### Bước 1: Khởi động Monitoring Consumer
-Mở Terminal 1 và chạy:
+### Cài đặt thư viện:
 ```bash
-python monitor_consumer_bai2.py
+pip install -r requirements.txt
 ```
-> Consumer sẽ liên tục chờ và nhận dữ liệu từ `sensor_data_queue`.
 
-### Bước 2: Khởi động Sensor Producer
-Mở Terminal 2 và chạy:
+### Khởi động nhanh RabbitMQ Broker (nếu dùng Docker):
 ```bash
-python sensor_producer_bai2.py
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
 ```
+*(Giao diện quản trị RabbitMQ: `http://localhost:15672`, user/pass: `guest`/`guest`)*.
 
-#### Tùy chọn mở rộng:
-- Thay đổi ID cảm biến và chu kỳ gửi (ví dụ: `sensor02`, gửi mỗi 2 giây):
+---
+
+## 4. Hướng Dẫn Chạy Từng Bài
+
+### 🔹 BÀI 1: Gửi và Nhận Message Cơ Bản Qua Queue
+- **Queue**: `iot_lab_queue`
+- **Chương trình**:
+  - `consumer_bai1.py`: Lắng nghe queue `iot_lab_queue`.
+  - `producer_bai1.py`: Gửi thông tin sinh viên (Nguyễn Phú Bình - B23DCCN083).
+- **Cách chạy**:
   ```bash
-  python sensor_producer_bai2.py --device-id "sensor02" --interval 2.0
+  # Terminal 1: Chạy Consumer
+  python consumer_bai1.py
+
+  # Terminal 2: Chạy Producer
+  python producer_bai1.py
   ```
-- Mô phỏng chạy nhiều cảm biến đồng thời: Có thể mở thêm Terminal 3 và chạy với `--device-id "sensor03"`.
 
 ---
 
-## 6. Kết Quả Đạt Được
+### 🔹 BÀI 2: Mô Phỏng Cảm Biến IoT Gửi Dữ Liệu Môi Trường
+- **Queue**: `sensor_data_queue`
+- **Chương trình**:
+  - `sensor_producer_bai2.py`: Sinh ngẫu nhiên nhiệt độ và độ ẩm, gửi JSON định kỳ mỗi 3s.
+  - `monitor_consumer_bai2.py`: Nhận telemetry, hiển thị và cảnh báo:
+    - `CANH BAO: Nhiet do cao` khi nhiệt độ > 35°C
+    - `CANH BAO: Do am thap` khi độ ẩm < 40%
+- **Cách chạy**:
+  ```bash
+  # Terminal 1: Chạy Monitoring Consumer
+  python monitor_consumer_bai2.py
 
-### Tại màn hình Sensor Producer:
-```text
-============================================================
-      BTH2 - SENSOR PRODUCER (MÔ PHỎNG CẢM BIẾN IOT)
-============================================================
-[*] Thiết bị: sensor01 | Chu kỳ gửi: 3.0s
-[*] Đang kết nối tới broker: localhost:5672...
-[+] Sẵn sàng gửi dữ liệu vào queue 'sensor_data_queue'. Nhấn Ctrl+C để dừng.
+  # Terminal 2: Chạy Cảm Biến IoT
+  python sensor_producer_bai2.py
+  ```
 
-[x] #1 Đã gửi telemetry: {"device_id": "sensor01", "temperature": 36.4, "humidity": 38.9, "timestamp": "2026-10-19 20:25:00"}
-[x] #2 Đã gửi telemetry: {"device_id": "sensor01", "temperature": 28.2, "humidity": 65.4, "timestamp": "2026-10-19 20:25:03"}
-```
+---
 
-### Tại màn hình Monitoring Consumer:
-```text
-============================================================
-      BTH2 - MONITORING CONSUMER (GIÁM SÁT CẢM BIẾN)
-============================================================
-[*] Ngưỡng cảnh báo: Nhiệt độ > 35.0°C | Độ ẩm < 40.0%
-[*] Đang kết nối tới broker: localhost:5672...
-[*] Đang lắng nghe trên queue 'sensor_data_queue'. Nhấn Ctrl+C để thoát.
+### 🔹 BÀI 3: Mô Phỏng Hệ Thống Điều Phối Cảnh Báo Với Exchange
+- **Exchange**: `iot_alert_exchange` (loại `direct`)
+- **Routing Keys**: `info`, `warning`, `critical`
+- **Chương trình**:
+  - `warning_consumer_bai3.py`: Nhận cảnh báo mức `warning`.
+  - `critical_consumer_bai3.py`: Nhận cảnh báo mức `critical`.
+  - `all_alerts_consumer_bai3.py`: Nhận tất cả cảnh báo và ghi log vào `alerts.log`.
+  - `alert_producer_bai3.py`: Phát cảnh báo theo mức độ.
+- **Cách chạy**:
+  ```bash
+  # Terminal 1: Warning Consumer
+  python warning_consumer_bai3.py
 
-------------------------------------------------------------
-Device: sensor01
-Temperature: 36.4
-Humidity: 38.9
-Timestamp: 2026-10-19 20:25:00
-CANH BAO: Nhiet do cao
-CANH BAO: Do am thap
-------------------------------------------------------------
-Device: sensor01
-Temperature: 28.2
-Humidity: 65.4
-Timestamp: 2026-10-19 20:25:03
-Trang thai: Binh thuong (Normal)
-------------------------------------------------------------
-```
+  # Terminal 2: Critical Consumer
+  python critical_consumer_bai3.py
+
+  # Terminal 3: Phát cảnh báo kiểm thử
+  python alert_producer_bai3.py
+  ```
+
+---
+
+## 5. Kết Luận Đạt Được
+- Hoàn thành đầy đủ 100% các yêu cầu từ Bài 1 đến Bài 3 của buổi thực hành AMQP.
+- Code được chuẩn hóa có đầy đủ xử lý ngoại lệ, UTF-8 trên Windows console, và hỗ trợ tham số dòng lệnh tùy biến broker host/port.
